@@ -1,4 +1,4 @@
-// 交互式向导（TUI）：拿到脚本的人 `npm start` 即可按提示填 Key、登录、粘贴作业网址、选模式作答。
+// 交互式向导（TUI）：拿到脚本的人 `npm start` 即可按提示填 Key、登录、粘贴网址、选择作答或刷课。
 // 零额外依赖：Node 内置 readline + ANSI 颜色。底层复用 answer-loop / course-loop。
 
 import readline from "node:readline/promises";
@@ -11,6 +11,7 @@ import { createLogger } from "./logger.mjs";
 import { extractInPage } from "./extract.mjs";
 import { sleep, dismissPopups, answerHomework } from "./answer-loop.mjs";
 import { runCourse } from "./course-loop.mjs";
+import { runWatch } from "./watch-loop.mjs";
 
 const C = {
   reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m",
@@ -23,9 +24,9 @@ const ask = (q) => rl.question(q);
 function banner() {
   console.log("");
   console.log(paint("  ┌────────────────────────────────────┐", C.cyan));
-  console.log(paint("  │   雨课堂自动答题 · 交互式向导        │", C.cyan + C.bold));
+  console.log(paint("  │   雨课堂学习助手 · 交互式向导        │", C.cyan + C.bold));
   console.log(paint("  └────────────────────────────────────┘", C.cyan));
-  console.log(paint("  截图 + 视觉大模型识别作答，支持单份/整门课，可选自动提交。", C.dim));
+  console.log(paint("  支持作业辅助、整课遍历和学习内容刷课。", C.dim));
 }
 
 // 常见 OpenAI 兼容服务商预设（模型须支持视觉/读图；型号仅为示例，可改）。
@@ -142,7 +143,15 @@ async function finishSummary(logger, args) {
   console.log(paint(`  日志: ${logPath}`, C.dim));
 }
 
+// 答题类功能需要 API Key；刷课不需要。进入答题功能前按需配置。
+async function ensureApi(args) {
+  if (args.apiKey) return true;
+  console.log(paint("  做题需要支持视觉的大模型 API；先配置一下（刷课则不需要）。", C.yellow));
+  return await setupProvider(args, true);
+}
+
 async function doSingle(args, context, shotDir) {
+  if (!(await ensureApi(args))) return;
   const url = (await ask(paint("  粘贴【作业页】URL（地址栏里含 /exercise/ 那串）: ", C.bold))).trim();
   if (!url) { console.log(paint("  未输入，返回。", C.yellow)); return; }
   if (!(await chooseMode(args))) return;
@@ -162,6 +171,7 @@ async function doSingle(args, context, shotDir) {
 }
 
 async function doCourse(args, context, shotDir) {
+  if (!(await ensureApi(args))) return;
   const url = (await ask(paint("  粘贴【学习日志/成绩单页】URL（含 /studentLog/）: ", C.bold))).trim();
   if (!url) { console.log(paint("  未输入，返回。", C.yellow)); return; }
   if (!(await chooseMode(args))) return;
@@ -172,6 +182,36 @@ async function doCourse(args, context, shotDir) {
   const { doneCount, planned } = await runCourse(args, context, page, logger, shotDir, url);
   console.log(paint(`  本次处理作业 ${doneCount}/${planned} 份`, C.green));
   await finishSummary(logger, args);
+}
+
+// 自动刷课：不需要 API Key。问 URL + 倍速/静音/讨论/上限，调 runWatch。
+async function doWatch(args, context) {
+  const url = (await ask(paint("  粘贴【学习内容/成绩单页】URL（含 /studentLog/）: ", C.bold))).trim();
+  if (!url) { console.log(paint("  未输入，返回。", C.yellow)); return; }
+
+  const sp = (await ask("  视频倍速 [默认 2]: ")).trim();
+  if (sp) { const n = Number.parseFloat(sp); if (n > 0) args.speed = n; }
+  const mu = (await ask("  静音播放？(Y/n): ")).trim().toLowerCase();
+  args.mute = mu !== "n" && mu !== "no";
+  const dz = (await ask(paint("  讨论环节自动复制最新评论发送？(y/N): ", C.yellow))).trim().toLowerCase();
+  args.discuss = dz === "y" || dz === "yes";
+  const mx = (await ask("  最多刷几个单元？[回车=不限，建议先填 1 试跑]: ")).trim();
+  if (mx) { const n = Number.parseInt(mx, 10); if (n > 0) args.maxUnits = n; }
+
+  const logger = createLogger(args.outDirAbs);
+  console.log(
+    paint(
+      `  开始刷课：倍速 ${args.speed}x | ${args.mute ? "静音" : "有声"} | 讨论自动发言:${args.discuss ? "开" : "关"}`,
+      C.dim,
+    ),
+  );
+  const page = context.pages()[0] || (await context.newPage());
+  const res = await runWatch(args, context, page, logger, url);
+  console.log(
+    paint(`  完成单元 ${res.done} | 跳过 ${res.skipped} | 失败 ${res.failed} | 共枚举 ${res.total}`, C.green + C.bold),
+  );
+  const logPath = await logger.save();
+  console.log(paint(`  日志: ${logPath}`, C.dim));
 }
 
 async function openLogin(context) {
@@ -191,7 +231,11 @@ async function main() {
   const shotDir = resolve(args.outDirAbs, "shots");
   await mkdir(shotDir, { recursive: true });
 
-  if (!(await setupProvider(args))) { rl.close(); return; }
+  if (args.apiKey) {
+    console.log(paint(`  ✓ API 已配置（${args.apiBase}，模型 ${args.model}）`, C.green));
+  } else {
+    console.log(paint("  （未配置 API：可直接用『3) 自动刷课』；做题功能在进入时再配置即可）", C.dim));
+  }
 
   console.log(paint("\n  正在启动 Chrome（用你已装的 Chrome，独立配置档，不影响日常浏览器）……", C.dim));
   let context;
@@ -211,19 +255,21 @@ async function main() {
     console.log(paint("  ── 主菜单 ──", C.bold + C.cyan));
     console.log("    1) 做单份作业");
     console.log("    2) 批量做整门课（自动遍历成绩单里未完成的作业）");
-    console.log("    3) 切换模型  当前: " + paint(args.model, C.cyan));
-    console.log("    4) 重新登录 / 检查登录");
-    console.log("    5) 重新配置 API（换服务商 / 模型 / Key）");
+    console.log("    3) 自动刷课（看视频/图文，已完成自动跳过；可选讨论自动发言）");
+    console.log("    4) 切换模型  当前: " + paint(args.model, C.cyan));
+    console.log("    5) 重新登录 / 检查登录");
+    console.log("    6) 重新配置 API（换服务商 / 模型 / Key）");
     console.log("    0) 退出");
     const ch = (await ask("  选择: ")).trim();
     try {
       if (ch === "1") await doSingle(args, context, shotDir);
       else if (ch === "2") await doCourse(args, context, shotDir);
-      else if (ch === "3") {
+      else if (ch === "3") await doWatch(args, context);
+      else if (ch === "4") {
         const m = (await ask("  输入模型 ID（回车保持不变）: ")).trim();
         if (m) { args.model = m; console.log(paint("  已切换到 " + m, C.green)); }
-      } else if (ch === "4") await openLogin(context);
-      else if (ch === "5") await setupProvider(args, true);
+      } else if (ch === "5") await openLogin(context);
+      else if (ch === "6") await setupProvider(args, true);
       else if (ch === "0") break;
       else console.log(paint("  无效选择。", C.yellow));
     } catch (e) {

@@ -20,6 +20,8 @@ export const DEFAULTS = {
   // 单题点击后等待 UI 稳定的时间。
   clickSettleMs: 350,
   maxQuestions: 200,
+  // 刷课：完成度轮询间隔（毫秒）
+  watchPollMs: 3000,
 };
 
 // 极简 .env 加载器：KEY=VALUE，每行一条，# 注释。不覆盖已存在的环境变量。
@@ -68,6 +70,13 @@ export function parseArgs(argv = process.argv.slice(2)) {
     clickSettleMs: DEFAULTS.clickSettleMs,
     maxQuestions: DEFAULTS.maxQuestions,
     maxHomeworks: 0,
+    // —— 刷课(watch)相关 ——
+    speed: 2, // 视频倍速
+    mute: true, // 静音
+    onlyChapter: "", // 只刷标题含该关键字的章节
+    discuss: false, // 讨论环节自动复制最新评论发送
+    maxUnits: 0, // 最多刷 N 个学习单元（0=不限）
+    watchPollMs: DEFAULTS.watchPollMs,
     startQuestion: null,
     targetIndex: null,
     help: false,
@@ -132,6 +141,24 @@ export function parseArgs(argv = process.argv.slice(2)) {
         break;
       case "--max-homeworks":
         args.maxHomeworks = Number.parseInt(next(), 10);
+        break;
+      case "--speed":
+        args.speed = Number.parseFloat(next());
+        break;
+      case "--no-mute":
+        args.mute = false;
+        break;
+      case "--only-chapter":
+        args.onlyChapter = next();
+        break;
+      case "--discuss":
+        args.discuss = true;
+        break;
+      case "--max-units":
+        args.maxUnits = Number.parseInt(next(), 10);
+        break;
+      case "--watch-poll":
+        args.watchPollMs = Number.parseInt(next(), 10);
         break;
       case "--start-question":
         args.startQuestion = Number.parseInt(next(), 10);

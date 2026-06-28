@@ -1,13 +1,14 @@
 {
-  "name": "yuketang-auto-answer",
+  "name": "yuketang-study-helper",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "用 Playwright 驱动本机 Chrome，读取雨课堂题目，调用火山方舟大模型作答并自动勾选选项（不自动提交）。",
+  "description": "用 Playwright 驱动本机 Chrome，辅助处理雨课堂作业、课程学习内容和进度核验。",
   "scripts": {
     "start": "node src/cli.mjs",
     "answer": "node src/run.mjs",
     "course": "node src/course.mjs",
+    "watch": "node src/watch.mjs",
     "dry-run": "node src/run.mjs --dry-run",
     "inspect": "node src/inspect.mjs"
   },

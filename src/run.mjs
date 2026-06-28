@@ -92,7 +92,7 @@ async function main() {
 
 function printHelp() {
   console.log(`
-雨课堂自动答题（单份作业）
+雨课堂学习助手（单份作业）
 
 用法:
   node src/run.mjs [选项]
