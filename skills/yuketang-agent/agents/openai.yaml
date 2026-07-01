@@ -1,0 +1,4 @@
+interface:
+  display_name: "Yuketang Agent"
+  short_description: "Agent-driven Rain Classroom helper"
+  default_prompt: "Use $yuketang-agent to guide me through Rain Classroom homework, quiz, or course watching with the local helper scripts."

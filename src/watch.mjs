@@ -29,8 +29,8 @@ async function main() {
       `${args.maxUnits ? ` | 限 ${args.maxUnits} 个单元` : ""}${args.onlyChapter ? ` | 仅“${args.onlyChapter}”` : ""}`,
   );
   logger.note(args.cdp ? `接管 Chrome（CDP: ${args.cdp}）……` : "启动独立配置档 Chrome……");
-  const { context } = await launchBrowser(args);
-  const listPage = context.pages()[0] || (await context.newPage());
+  const { context, page } = await launchBrowser(args);
+  const listPage = page || (await context.newPage());
 
   const res = await runWatch(args, context, listPage, logger, args.openUrl);
 

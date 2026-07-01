@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { writeFile } from "node:fs/promises";
 import { extractInPage, readProgressInPage } from "./extract.mjs";
 import { solveQuestion } from "./llm.mjs";
+import { getAgentAnswer } from "./agent-io.mjs";
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -238,16 +239,45 @@ export async function answerHomework(args, context, page, logger, shotDir, label
     }
 
     const imageBase64 = await screenshotQuestion(page);
-    await writeFile(
-      resolve(shotDir, `q-${String(idx).replace(/[^\w-]/g, "_")}.png`),
-      Buffer.from(imageBase64, "base64"),
-    ).catch(() => {});
+    const shot = resolve(shotDir, `q-${String(idx).replace(/[^\w-]/g, "_")}.png`);
+    await writeFile(shot, Buffer.from(imageBase64, "base64")).catch(() => {});
 
-    const res = await solveQuestion(args, {
-      type: q.type,
-      options: letters.map((l) => ({ label: l })),
-      imageBase64,
-    });
+    if (args.agentDump) {
+      logger.logQuestion({
+        index: idx,
+        type: q.type,
+        stem: q.header,
+        options: letters,
+        answer: [],
+        clicked: false,
+        skipped: false,
+        inspectOnly: true,
+        reason: "agent-dump：已导出题面截图，等待 Agent 写 answers-file",
+        shot,
+        answerFormat: q.type === "multiple" ? "choice letters array, e.g. [\"A\",\"C\"]" : "one choice letter, e.g. [\"B\"]",
+      });
+      await sleep(args.delayMs);
+      continue;
+    }
+
+    const res = args.answersFile
+      ? (() => {
+          const agent = getAgentAnswer(args, {
+            index: idx,
+            shortIndex: n,
+            kind: "choice",
+            type: q.type,
+            validLetters: letters,
+          });
+          return agent.ok
+            ? { ok: true, answer: agent.answers, reason: agent.reason, raw: agent.raw }
+            : { ok: false, answer: [], error: agent.error };
+        })()
+      : await solveQuestion(args, {
+          type: q.type,
+          options: letters.map((l) => ({ label: l })),
+          imageBase64,
+        });
 
     let clicked = false;
     let actualChecked = [];
@@ -289,6 +319,7 @@ export async function answerHomework(args, context, page, logger, shotDir, label
       submitted: !!(submitInfo && submitInfo.startsWith("已提交")),
       submitInfo,
       dryRun: args.dryRun,
+      shot,
       error: error || undefined,
       raw: res.ok ? undefined : res.raw,
     });

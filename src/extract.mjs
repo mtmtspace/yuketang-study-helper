@@ -9,7 +9,8 @@
 //   选中态    label 含 is-checked
 
 // 在页面里执行：定位当前可见题目，给容器/选项打标，返回结构化数据。
-export function extractInPage() {
+// options.rootSelector 可限制在某个题块内，用于新版 studentQuiz iframe 复用旧选择题逻辑。
+export function extractInPage(cfg = {}) {
   const norm = (s) => String(s || "").replace(/\s+/g, " ").trim();
   const visible = (el) => {
     const r = el.getBoundingClientRect();
@@ -22,12 +23,13 @@ export function extractInPage() {
   document.querySelectorAll("[data-aa-q]").forEach((e) => e.removeAttribute("data-aa-q"));
 
   const optSel = "label.el-radio, label.el-checkbox";
-  const items = [...document.querySelectorAll(".subject-item")];
+  const roots = cfg.rootSelector ? [document.querySelector(cfg.rootSelector)].filter(Boolean) : [];
+  const items = roots.length ? roots : [...document.querySelectorAll(".subject-item, .problem_item")];
 
   // 取“可见且含可见选项”的题目容器 = 当前题
   let item = items.find((it) => visible(it) && [...it.querySelectorAll(optSel)].some(visible));
   if (!item) item = items.find((it) => it.querySelectorAll(optSel).length > 0);
-  if (!item) return { ok: false, error: "未找到含选项的题目容器(.subject-item)" };
+  if (!item) return { ok: false, error: "未找到含选项的题目容器(.subject-item/.problem_item)" };
 
   item.setAttribute("data-aa-q", "1");
   const text = item.innerText || "";

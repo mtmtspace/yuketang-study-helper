@@ -1,5 +1,5 @@
 // 交互式向导（TUI）：拿到脚本的人 `npm start` 即可按提示填 Key、登录、粘贴网址、选择作答或刷课。
-// 零额外依赖：Node 内置 readline + ANSI 颜色。底层复用 answer-loop / course-loop。
+// 零额外依赖：Node 内置 readline + ANSI 颜色。底层复用 answer-loop / course-loop / quiz-loop / watch-loop。
 
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
@@ -11,6 +11,7 @@ import { createLogger } from "./logger.mjs";
 import { extractInPage } from "./extract.mjs";
 import { sleep, dismissPopups, answerHomework } from "./answer-loop.mjs";
 import { runCourse } from "./course-loop.mjs";
+import { runQuizPapers } from "./quiz-loop.mjs";
 import { runWatch } from "./watch-loop.mjs";
 
 const C = {
@@ -26,7 +27,7 @@ function banner() {
   console.log(paint("  ┌────────────────────────────────────┐", C.cyan));
   console.log(paint("  │   雨课堂学习助手 · 交互式向导        │", C.cyan + C.bold));
   console.log(paint("  └────────────────────────────────────┘", C.cyan));
-  console.log(paint("  支持作业辅助、整课遍历和学习内容刷课。", C.dim));
+  console.log(paint("  支持作业辅助、整课遍历、新版试卷和学习内容刷课。", C.dim));
 }
 
 // 常见 OpenAI 兼容服务商预设（模型须支持视觉/读图；型号仅为示例，可改）。
@@ -123,6 +124,37 @@ async function chooseMode(args) {
   return true;
 }
 
+async function chooseQuizMode(args) {
+  args.dryRun = false;
+  args.noLlm = false;
+  args.submit = false;
+  console.log("");
+  console.log(paint("  新版试卷处理方式：", C.bold));
+  console.log("    1) 试运行       —— 只看模型答案，不填写");
+  console.log("    2) 填写并保存   —— 填入/点选答案，但不最终交卷");
+  console.log("    3) 填写并交卷   —— 每份试卷处理完后自动点最终交卷（" + paint("提交不可逆！", C.red) + "）");
+  console.log("    4) 只核验结构   —— 不请求模型，只进页面截图/识别题框");
+  const m = (await ask("  选择 [1/2/3/4]: ")).trim();
+  if (m === "1") {
+    args.dryRun = true;
+  } else if (m === "2") {
+    args.dryRun = false;
+  } else if (m === "3") {
+    const yes = (await ask(paint("  自动交卷不可逆，确认开始？(y/N): ", C.yellow))).trim().toLowerCase();
+    if (yes !== "y" && yes !== "yes") {
+      console.log(paint("  已取消。", C.yellow));
+      return false;
+    }
+    args.submit = true;
+  } else if (m === "4") {
+    args.noLlm = true;
+  } else {
+    console.log(paint("  无效选择，已取消。", C.yellow));
+    return false;
+  }
+  return true;
+}
+
 async function waitForQuestions(page) {
   console.log(paint("  等待题目加载（若未登录，请在浏览器窗口里登录）……", C.dim));
   for (let i = 0; i < 40; i += 1) {
@@ -182,6 +214,58 @@ async function doCourse(args, context, shotDir) {
   const { doneCount, planned } = await runCourse(args, context, page, logger, shotDir, url);
   console.log(paint(`  本次处理作业 ${doneCount}/${planned} 份`, C.green));
   await finishSummary(logger, args);
+}
+
+async function doQuiz(args, context) {
+  const url = (await ask(paint("  粘贴【学习日志/成绩单页】URL（含 /studentLog/）: ", C.bold))).trim();
+  if (!url) { console.log(paint("  未输入，返回。", C.yellow)); return; }
+
+  args.only = "";
+  args.maxHomeworks = 0;
+  args.todo = true;
+  args.force = false;
+  args.startNewQuiz = false;
+  args.answers = [];
+
+  const kw = (await ask("  只处理标题含关键字的试卷？[回车=不限]: ")).trim();
+  if (kw) args.only = kw;
+
+  const startNew = (await ask(paint("  包含未开始试卷并自动点开始？(y/N): ", C.yellow))).trim().toLowerCase();
+  args.startNewQuiz = startNew === "y" || startNew === "yes";
+
+  const todo = (await ask("  只处理待做试卷、跳过已得分？(Y/n): ")).trim().toLowerCase();
+  if (todo === "n" || todo === "no") {
+    const yes = (await ask(paint("  这会包含已得分/已完成试卷并覆盖已有答案，确认？(y/N): ", C.yellow))).trim().toLowerCase();
+    if (yes === "y" || yes === "yes") {
+      args.todo = false;
+      args.force = true;
+    }
+  }
+
+  const mx = (await ask("  最多处理几份试卷？[回车=不限，建议先填 1 试跑]: ")).trim();
+  if (mx) { const n = Number.parseInt(mx, 10); if (n > 0) args.maxHomeworks = n; }
+
+  if (!(await chooseQuizMode(args))) return;
+  if (!args.noLlm && !(await ensureApi(args))) return;
+
+  const logger = createLogger(args.outDirAbs);
+  const quizShotDir = resolve(args.outDirAbs, "quiz-shots");
+  await mkdir(quizShotDir, { recursive: true });
+  const page = context.pages()[0] || (await context.newPage());
+  console.log(paint("  进入成绩单、遍历新版试卷……", C.dim));
+  const res = await runQuizPapers(args, context, page, logger, quizShotDir, url);
+  const sum = logger.summary();
+  const logPath = await logger.save();
+  console.log("");
+  console.log(
+    paint(
+      `  完成：处理试卷 ${res.doneCount}/${res.planned} 份 | 自动交卷 ${res.submittedCount || 0} | 题目 ${res.problemCount} | 已填写/点选 ${sum.clicked} | 失败 ${sum.failed}`,
+      C.green + C.bold,
+    ),
+  );
+  if (!args.submit && !args.dryRun && !args.noLlm) console.log(paint("  （未最终交卷，请在浏览器核对后手动交卷）", C.yellow));
+  console.log(paint(`  日志: ${logPath}`, C.dim));
+  console.log(paint(`  题面截图: ${quizShotDir}`, C.dim));
 }
 
 // 自动刷课：不需要 API Key。问 URL + 倍速/静音/讨论/上限，调 runWatch。
@@ -255,21 +339,23 @@ async function main() {
     console.log(paint("  ── 主菜单 ──", C.bold + C.cyan));
     console.log("    1) 做单份作业");
     console.log("    2) 批量做整门课（自动遍历成绩单里未完成的作业）");
-    console.log("    3) 自动刷课（看视频/图文，已完成自动跳过；可选讨论自动发言）");
-    console.log("    4) 切换模型  当前: " + paint(args.model, C.cyan));
-    console.log("    5) 重新登录 / 检查登录");
-    console.log("    6) 重新配置 API（换服务商 / 模型 / Key）");
+    console.log("    3) 新版试卷（studentQuiz，填空/选择，待做连续处理）");
+    console.log("    4) 自动刷课（看视频/图文，已完成自动跳过；可选讨论自动发言）");
+    console.log("    5) 切换模型  当前: " + paint(args.model, C.cyan));
+    console.log("    6) 重新登录 / 检查登录");
+    console.log("    7) 重新配置 API（换服务商 / 模型 / Key）");
     console.log("    0) 退出");
     const ch = (await ask("  选择: ")).trim();
     try {
       if (ch === "1") await doSingle(args, context, shotDir);
       else if (ch === "2") await doCourse(args, context, shotDir);
-      else if (ch === "3") await doWatch(args, context);
-      else if (ch === "4") {
+      else if (ch === "3") await doQuiz(args, context);
+      else if (ch === "4") await doWatch(args, context);
+      else if (ch === "5") {
         const m = (await ask("  输入模型 ID（回车保持不变）: ")).trim();
         if (m) { args.model = m; console.log(paint("  已切换到 " + m, C.green)); }
-      } else if (ch === "5") await openLogin(context);
-      else if (ch === "6") await setupProvider(args, true);
+      } else if (ch === "6") await openLogin(context);
+      else if (ch === "7") await setupProvider(args, true);
       else if (ch === "0") break;
       else console.log(paint("  无效选择。", C.yellow));
     } catch (e) {

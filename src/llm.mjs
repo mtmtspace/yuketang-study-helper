@@ -185,3 +185,127 @@ export async function solveQuestion(args, question, { networkRetries = 2 } = {})
 
   return { ok: false, answer: [], reason: "", raw: lastRaw, error: lastErr };
 }
+
+function buildFillBlankMessages(question) {
+  const blankCount = Number(question.blankCount || 0);
+  const countText = blankCount > 0 ? `${blankCount} 个` : "若干";
+  const system =
+    "你是严谨的英文金融课程填空题答题助手。图片里是一道雨课堂填空题，题干中用 [填空1]、[填空2] 等标出空格。" +
+    `请按顺序给出 ${countText}填空答案。` +
+    "只输出一个 JSON 对象，不要任何额外文字、不要 markdown 代码块。" +
+    '格式：{"answers":["第1空答案","第2空答案"],"reason":"简短理由"}。' +
+    "答案要能直接填进文本框；true/false 题请使用英文小写 true 或 false。";
+  const userText =
+    `题目标题：${question.title || ""}\n` +
+    `填空数量：${blankCount || "未知"}\n` +
+    "请阅读图片里的题干，严格按 [填空1] 到最后一个空的顺序返回 JSON。";
+
+  return [
+    { role: "system", content: system },
+    {
+      role: "user",
+      content: [
+        { type: "image_url", image_url: { url: `data:image/png;base64,${question.imageBase64}` } },
+        { type: "text", text: userText },
+      ],
+    },
+  ];
+}
+
+function normalizeFillAnswer(value) {
+  if (typeof value === "boolean") return value ? "true" : "false";
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (/^(true|t|正确|对|是)$/i.test(text)) return "true";
+  if (/^(false|f|错误|错|否)$/i.test(text)) return "false";
+  return text;
+}
+
+function parseFillBlankAnswers(content, blankCount) {
+  let answers = [];
+  const objMatch = content.match(/\{[\s\S]*\}/);
+  if (objMatch) {
+    try {
+      const obj = JSON.parse(objMatch[0]);
+      const raw = obj?.answers ?? obj?.answer;
+      if (Array.isArray(raw)) answers = raw.map(normalizeFillAnswer);
+      else if (raw !== undefined) answers = [normalizeFillAnswer(raw)];
+    } catch {
+      /* fall through */
+    }
+  }
+
+  if (!answers.length) {
+    const lines = content
+      .split(/\r?\n|；|;/)
+      .map((line) => line.replace(/^\s*(?:\d+|填空\s*\d+|blank\s*\d+)[).、:：-]?\s*/i, "").trim())
+      .filter(Boolean);
+    answers = lines.map(normalizeFillAnswer);
+  }
+
+  if (blankCount > 0) answers = answers.slice(0, blankCount);
+  return answers;
+}
+
+function getFillReason(content) {
+  const m = content.match(/\{[\s\S]*\}/);
+  if (m) {
+    try {
+      return JSON.parse(m[0]).reason || "";
+    } catch {
+      /* ignore */
+    }
+  }
+  return "";
+}
+
+/**
+ * 解填空题（视觉）。返回 { ok, answers:[字符串], reason, raw, error }。
+ */
+export async function solveFillBlank(args, question, { networkRetries = 2 } = {}) {
+  const baseMessages = buildFillBlankMessages(question);
+  const blankCount = Number(question.blankCount || 0);
+  let lastErr = "";
+  let lastRaw = "";
+
+  for (let attempt = 0; attempt <= 1; attempt += 1) {
+    const msgs =
+      attempt === 0
+        ? baseMessages
+        : [
+            ...baseMessages,
+            {
+              role: "system",
+              content:
+                "上一次输出未能解析出有效填空答案。请严格只输出 JSON，" +
+                `answers 数组长度应为 ${blankCount || "题目空格数量"}，例如 {"answers":["true","false"]}。`,
+            },
+          ];
+
+    let content = "";
+    let netErr = "";
+    for (let n = 0; n <= networkRetries; n += 1) {
+      try {
+        content = await callArkOnce(args, msgs);
+        netErr = "";
+        break;
+      } catch (e) {
+        netErr = e.message;
+        await new Promise((r) => setTimeout(r, 500 * (n + 1)));
+      }
+    }
+    if (netErr) {
+      lastErr = netErr;
+      continue;
+    }
+
+    lastRaw = content;
+    const answers = parseFillBlankAnswers(content, blankCount);
+    const enough = blankCount > 0 ? answers.length === blankCount : answers.length > 0;
+    if (enough && answers.every(Boolean)) {
+      return { ok: true, answers, reason: getFillReason(content), raw: content };
+    }
+    lastErr = `无法解析出 ${blankCount || ""} 个有效填空答案`.trim();
+  }
+
+  return { ok: false, answers: [], reason: "", raw: lastRaw, error: lastErr };
+}

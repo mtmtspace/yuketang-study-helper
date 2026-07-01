@@ -7,6 +7,7 @@ import { parseArgs, requireApiKey } from "./config.mjs";
 import { launchBrowser, findYuketangPage, closeBrowser } from "./browser.mjs";
 import { createLogger } from "./logger.mjs";
 import { sleep, dismissPopups, waitForQuestionPage, answerHomework } from "./answer-loop.mjs";
+import { usesAgentSolver } from "./agent-io.mjs";
 
 async function main() {
   const args = parseArgs();
@@ -14,7 +15,7 @@ async function main() {
     printHelp();
     return;
   }
-  requireApiKey(args);
+  if (!usesAgentSolver(args)) requireApiKey(args);
 
   const logger = createLogger(args.outDirAbs);
   const shotDir = resolve(args.outDirAbs, "shots");
@@ -22,10 +23,14 @@ async function main() {
 
   const modeText = args.dryRun
     ? "dry-run（只读不点选）"
-    : args.submit
-      ? "作答 + 自动提交（每题选完即交、自动翻页）"
-      : "作答（勾选，不提交）";
-  logger.note(`模式: ${modeText} | 模型: ${args.model}`);
+    : args.agentDump
+      ? "Agent dump（只截图导出，不调用模型、不点选）"
+      : args.answersFile
+        ? "Agent answers-file（读取 Agent 答案并回填）"
+        : args.submit
+          ? "作答 + 自动提交（每题选完即交、自动翻页）"
+          : "作答（勾选，不提交）";
+  logger.note(`模式: ${modeText}${usesAgentSolver(args) ? "" : ` | 模型: ${args.model}`}`);
   logger.note(
     args.cdp
       ? `接管已打开的 Chrome（CDP: ${args.cdp}）……`
@@ -101,6 +106,8 @@ function printHelp() {
   --submit             每题选完自动点“提交”并自动翻页（默认不提交）
   --cdp <url>          接管你已带调试端口启动的 Chrome，如 http://127.0.0.1:9222
   --dry-run            只提取+问模型+记录，不点选
+  --agent-dump         给 Agent 用：只截图导出题目，不请求模型、不点选
+  --answers-file <f>   给 Agent 用：读取 JSON 答案文件并回填
   --force              已答过/已交过的题也重新处理
   --max-questions <n>  最多处理题数（默认 200）
   --start-question <n> 从第 n 题开始（跳题/续答）

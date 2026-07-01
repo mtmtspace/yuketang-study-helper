@@ -48,11 +48,33 @@ function loadDotEnv() {
   }
 }
 
+function parseAnswerList(value) {
+  const text = String(value || "").trim();
+  if (!text) return [];
+  if (text.startsWith("[")) {
+    const parsed = JSON.parse(text);
+    if (!Array.isArray(parsed)) throw new Error("--answers JSON 必须是数组");
+    return parsed.map(normalizeManualAnswer);
+  }
+  return text
+    .split(/[,，;；]/)
+    .map(normalizeManualAnswer)
+    .filter(Boolean);
+}
+
+function normalizeManualAnswer(value) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (/^(true|t|正确|对|是)$/i.test(text)) return "true";
+  if (/^(false|f|错误|错|否)$/i.test(text)) return "false";
+  return text;
+}
+
 export function parseArgs(argv = process.argv.slice(2)) {
   loadDotEnv();
 
   const args = {
     dryRun: false,
+    noLlm: false,
     force: false,
     headless: false,
     exitWhenDone: false,
@@ -63,6 +85,9 @@ export function parseArgs(argv = process.argv.slice(2)) {
     openUrl: "",
     cdp: "",
     submit: false,
+    todo: false,
+    agentDump: false,
+    answersFile: "",
     only: "",
     profileDir: DEFAULTS.profileDir,
     outDir: DEFAULTS.outDir,
@@ -70,6 +95,7 @@ export function parseArgs(argv = process.argv.slice(2)) {
     clickSettleMs: DEFAULTS.clickSettleMs,
     maxQuestions: DEFAULTS.maxQuestions,
     maxHomeworks: 0,
+    answers: [],
     // —— 刷课(watch)相关 ——
     speed: 2, // 视频倍速
     mute: true, // 静音
@@ -77,6 +103,7 @@ export function parseArgs(argv = process.argv.slice(2)) {
     discuss: false, // 讨论环节自动复制最新评论发送
     maxUnits: 0, // 最多刷 N 个学习单元（0=不限）
     watchPollMs: DEFAULTS.watchPollMs,
+    startNewQuiz: false, // quiz 模块：允许启动未开始试卷
     startQuestion: null,
     targetIndex: null,
     help: false,
@@ -92,6 +119,9 @@ export function parseArgs(argv = process.argv.slice(2)) {
         break;
       case "--dry-run":
         args.dryRun = true;
+        break;
+      case "--no-llm":
+        args.noLlm = true;
         break;
       case "--force":
         args.force = true;
@@ -124,6 +154,15 @@ export function parseArgs(argv = process.argv.slice(2)) {
       case "--submit":
         args.submit = true;
         break;
+      case "--todo":
+        args.todo = true;
+        break;
+      case "--agent-dump":
+        args.agentDump = true;
+        break;
+      case "--answers-file":
+        args.answersFile = next();
+        break;
       case "--only":
         args.only = next();
         break;
@@ -142,6 +181,9 @@ export function parseArgs(argv = process.argv.slice(2)) {
       case "--max-homeworks":
         args.maxHomeworks = Number.parseInt(next(), 10);
         break;
+      case "--answers":
+        args.answers = parseAnswerList(next());
+        break;
       case "--speed":
         args.speed = Number.parseFloat(next());
         break;
@@ -159,6 +201,9 @@ export function parseArgs(argv = process.argv.slice(2)) {
         break;
       case "--watch-poll":
         args.watchPollMs = Number.parseInt(next(), 10);
+        break;
+      case "--start-new-quiz":
+        args.startNewQuiz = true;
         break;
       case "--start-question":
         args.startQuestion = Number.parseInt(next(), 10);

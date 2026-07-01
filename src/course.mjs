@@ -8,6 +8,7 @@ import { parseArgs, requireApiKey } from "./config.mjs";
 import { launchBrowser, closeBrowser } from "./browser.mjs";
 import { createLogger } from "./logger.mjs";
 import { runCourse } from "./course-loop.mjs";
+import { usesAgentSolver } from "./agent-io.mjs";
 
 async function main() {
   const args = parseArgs();
@@ -16,13 +17,18 @@ async function main() {
     console.log("  --only \"第X章\" 只做某份；--force 连已完成的也重做；不带 --submit 只勾选不提交。");
     return;
   }
-  requireApiKey(args);
+  if (!usesAgentSolver(args)) requireApiKey(args);
 
   const logger = createLogger(args.outDirAbs);
   const shotDir = resolve(args.outDirAbs, "shots");
   await mkdir(shotDir, { recursive: true });
 
-  logger.note(`课程批量模式 | ${args.submit ? "自动提交" : "只勾选不提交"} | 模型: ${args.model}`);
+  const solverText = args.agentDump
+    ? "Agent dump（只截图导出）"
+    : args.answersFile
+      ? `Agent answers-file（${args.answersFile}）`
+      : `模型: ${args.model}`;
+  logger.note(`课程批量模式 | ${args.submit ? "自动提交" : "只勾选不提交"} | ${solverText}`);
   logger.note(args.cdp ? `接管 Chrome（CDP: ${args.cdp}）……` : "启动独立配置档 Chrome……");
   const { context } = await launchBrowser(args);
   const listPage = context.pages()[0] || (await context.newPage());

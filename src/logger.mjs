@@ -19,6 +19,8 @@ export function createLogger(outDirAbs) {
       const ans = rec.answer && rec.answer.length ? rec.answer.join("") : "-";
       const status = rec.error
         ? `✗ ${rec.error}`
+        : rec.inspectOnly
+          ? "仅检查"
         : rec.skipped
           ? "已答·跳过"
           : rec.submitInfo
